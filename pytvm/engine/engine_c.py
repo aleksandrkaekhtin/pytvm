@@ -40,10 +40,10 @@ class EmulatorEngineC(EmulatorEngine):
         lib.transaction_emulator_set_prev_blocks_info.restype = ctypes.c_bool
         lib.transaction_emulator_set_prev_blocks_info.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
-        lib.transaction_emulator_emulate_transaction.restype = ctypes.c_char_p
+        lib.transaction_emulator_emulate_transaction.restype = ctypes.c_void_p
         lib.transaction_emulator_emulate_transaction.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
 
-        lib.transaction_emulator_emulate_tick_tock_transaction.restype = ctypes.c_char_p
+        lib.transaction_emulator_emulate_tick_tock_transaction.restype = ctypes.c_void_p
         lib.transaction_emulator_emulate_tick_tock_transaction.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
 
         lib.transaction_emulator_destroy.restype = None
@@ -70,19 +70,34 @@ class EmulatorEngineC(EmulatorEngine):
         lib.tvm_emulator_set_debug_enabled.restype = ctypes.c_bool
         lib.tvm_emulator_set_debug_enabled.argtypes = [ctypes.c_void_p, ctypes.c_bool]
 
-        lib.tvm_emulator_run_get_method.restype = ctypes.c_char_p
+        lib.tvm_emulator_run_get_method.restype = ctypes.c_void_p
         lib.tvm_emulator_run_get_method.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
 
-        lib.tvm_emulator_send_external_message.restype = ctypes.c_char_p
+        lib.tvm_emulator_send_external_message.restype = ctypes.c_void_p
         lib.tvm_emulator_send_external_message.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
-        lib.tvm_emulator_send_internal_message.restype = ctypes.c_char_p
+        lib.tvm_emulator_send_internal_message.restype = ctypes.c_void_p
         lib.tvm_emulator_send_internal_message.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint]
 
         lib.tvm_emulator_destroy.restype = None
         lib.tvm_emulator_destroy.argtypes = [ctypes.c_void_p]
 
+        # Response strings from libemulator are allocated via strdup() and must be
+        # released with string_destroy(). Binding it explicitly here so the wrappers
+        # below can free after copying the JSON text into a Python bytes object.
+        lib.string_destroy.restype = None
+        lib.string_destroy.argtypes = [ctypes.c_void_p]
+
         self.lib = lib
+
+    def _consume_response(self, ptr):
+        """Decode a strdup'd JSON C string returned by libemulator, then free it."""
+        if not ptr:
+            return None
+        try:
+            return json.loads(ctypes.string_at(ptr))
+        finally:
+            self.lib.string_destroy(ptr)
 
     def transaction_emulator_create(self, config_boc: bytes, verbosity_level: int):
         return self.lib.transaction_emulator_create(config_boc, verbosity_level)
@@ -112,10 +127,14 @@ class EmulatorEngineC(EmulatorEngine):
         return self.lib.transaction_emulator_set_prev_blocks_info(emulator, prev_blocks_info_boc)
 
     def transaction_emulator_emulate_transaction(self, emulator, shard_account_boc: bytes, message_boc: bytes) -> dict:
-        return json.loads(self.lib.transaction_emulator_emulate_transaction(emulator, shard_account_boc, message_boc))
+        return self._consume_response(
+            self.lib.transaction_emulator_emulate_transaction(emulator, shard_account_boc, message_boc)
+        )
 
     def transaction_emulator_emulate_tick_tock_transaction(self, emulator, shard_account_boc: bytes, is_tock: bool) -> dict:
-        return json.loads(self.lib.transaction_emulator_emulate_tick_tock_transaction(emulator, shard_account_boc, is_tock))
+        return self._consume_response(
+            self.lib.transaction_emulator_emulate_tick_tock_transaction(emulator, shard_account_boc, is_tock)
+        )
 
     def transaction_emulator_destroy(self, emulator):
         self.lib.transaction_emulator_destroy(emulator)
@@ -142,13 +161,19 @@ class EmulatorEngineC(EmulatorEngine):
         return self.lib.tvm_emulator_set_debug_enabled(emulator, debug_enabled)
 
     def tvm_emulator_run_get_method(self, emulator, method_id: int, stack_boc: bytes) -> dict:
-        return json.loads(self.lib.tvm_emulator_run_get_method(emulator, method_id, stack_boc))
+        return self._consume_response(
+            self.lib.tvm_emulator_run_get_method(emulator, method_id, stack_boc)
+        )
 
     def tvm_emulator_send_external_message(self, emulator, message_boc: bytes) -> dict:
-        return json.loads(self.lib.tvm_emulator_send_external_message(emulator, message_boc))
+        return self._consume_response(
+            self.lib.tvm_emulator_send_external_message(emulator, message_boc)
+        )
 
     def tvm_emulator_send_internal_message(self, emulator, message_boc: bytes, amount: int) -> dict:
-        return json.loads(self.lib.tvm_emulator_send_internal_message(emulator, message_boc, amount))
+        return self._consume_response(
+            self.lib.tvm_emulator_send_internal_message(emulator, message_boc, amount)
+        )
 
     def tvm_emulator_destroy(self, emulator):
         self.lib.tvm_emulator_destroy(emulator)
